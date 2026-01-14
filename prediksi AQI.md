@@ -34,6 +34,47 @@ Warna berubah secara dinamis berdasarkan tingkat polusi:
 *   🟣 **Ungu (>200)**: Sangat Tidak Sehat / Berbahaya
 
 
-## 💻 Lokasi File
+## ⚙️ Cara Menjalankan Machine Learning
+Untuk mengaktifkan fitur prediksi, Anda perlu menjalankan server ML Python (FastAPI):
+
+1.  **Buka Terminal** dan arahkan ke folder machine learning:
+    ```bash
+    cd "machine learning/api"
+    ```
+2.  **Instal Library** yang dibutuhkan (jika belum):
+    ```bash
+    pip install fastapi uvicorn joblib numpy pandas xgboost pydantic
+    ```
+3.  **Jalankan Server**:
+    ```bash
+    uvicorn app_simple:app --host 0.0.0.0 --port 8001 --reload
+    ```
+    *Server akan berjalan di `http://localhost:8001`*
+
+## � Integrasi API (Frontend)
+Frontend melakukan dua tahap pemanggilan API untuk menghasilkan prediksi:
+
+### 1. Mengambil Data Historis (Backend Utama)
+Frontend mengambil data PM2.5 dari backend utama sebagai input untuk model ML.
+*   **Endpoint**: `/weather/analytics/hourly`
+*   **Method**: `GET`
+*   **Query Params**: `city={nama_kota}&hours=72`
+*   **Headers**: `Authorization: Bearer <token>`
+
+### 2. Melakukan Prediksi (ML API)
+Data historis dikirim ke server ML untuk diproses.
+*   **Endpoint**: `http://localhost:8001/predict`
+*   **Method**: `POST`
+*   **Body**: 
+    ```json
+    [
+      { "timestamp": "2024-01-01T00:00:00", "pm25_density": 25.5 },
+      ...
+    ]
+    ```
+*   **Output**: Array berisi 48 objek prediksi (timestamp & predicted_aqi).
+
+## �💻 Lokasi File
 *   Komponen UI: [AQIPrediction.jsx](file:///c:/Users/user/Downloads/Hawa/hawa-fe-sl2/src/components/AQIPrediction.jsx)
 *   Integrasi Dashboard: [Dashboard.jsx](file:///c:/Users/user/Downloads/Hawa/hawa-fe-sl2/src/pages/Dashboard.jsx)
+*   Server ML: [app_simple.py](file:///c:/Users/user/Downloads/Hawa/machine%20learning/api/app_simple.py)
