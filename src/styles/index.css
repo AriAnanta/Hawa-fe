@@ -1,0 +1,346 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes slide-left {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes slide-right {
+  0% {
+    transform: translateX(-50%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-left {
+  animation: slide-left 30s linear infinite;
+}
+
+.animate-slide-right {
+  animation: slide-right 30s linear infinite;
+}
+
+/* Wind Effect Animations */
+@keyframes wind-1 {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100vw);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-2 {
+  0% {
+    transform: translateX(100vw);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-3 {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100vw);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-4 {
+  0% {
+    transform: translateX(100vw);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-5 {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100vw);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-particle {
+  0% {
+    transform: translateX(-100px) translateY(0px);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(calc(100vw + 100px)) translateY(-50px);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-curve-1 {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-curve-2 {
+  0% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-curve-3 {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-streak-left {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100vw);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-streak-right {
+  0% {
+    transform: translateX(100vw);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-swirl {
+  0% {
+    transform: rotate(0deg) scale(0.8);
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+    transform: rotate(180deg) scale(1.2);
+  }
+  100% {
+    transform: rotate(360deg) scale(0.8);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-particle-enhanced {
+  0% {
+    transform: translateX(-50px) translateY(0px) scale(0.5);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(calc(100vw + 50px)) translateY(-80px) scale(1);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-cloud {
+  0% {
+    transform: translateX(-200px) translateY(0px);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(calc(100vw + 200px)) translateY(-100px);
+    opacity: 0;
+  }
+}
+
+@keyframes wind-diagonal {
+  0% {
+    transform: translateX(-100px) translateY(0px) rotate(-20deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(calc(100vw + 100px)) translateY(-150px) rotate(-20deg);
+    opacity: 0;
+  }
+}
+
+.animate-wind-1 {
+  animation: wind-1 8s ease-in-out infinite;
+}
+
+.animate-wind-2 {
+  animation: wind-2 10s ease-in-out infinite;
+  animation-delay: 1s;
+}
+
+.animate-wind-3 {
+  animation: wind-3 12s ease-in-out infinite;
+  animation-delay: 2s;
+}
+
+.animate-wind-4 {
+  animation: wind-4 9s ease-in-out infinite;
+  animation-delay: 3s;
+}
+
+.animate-wind-5 {
+  animation: wind-5 11s ease-in-out infinite;
+  animation-delay: 4s;
+}
+
+.animate-wind-particle {
+  animation: wind-particle 15s linear infinite;
+}
+
+.animate-wind-streak-left {
+  animation: wind-streak-left 6s linear infinite;
+}
+
+.animate-wind-streak-right {
+  animation: wind-streak-right 6s linear infinite;
+}
+
+.animate-wind-swirl {
+  animation: wind-swirl 8s ease-in-out infinite;
+}
+
+.animate-wind-particle-enhanced {
+  animation: wind-particle-enhanced 10s linear infinite;
+}
+
+.animate-wind-cloud {
+  animation: wind-cloud 15s ease-in-out infinite;
+}
+
+.animate-wind-diagonal {
+  animation: wind-diagonal 7s linear infinite;
+}
+
+.animate-wind-curve-1 {
+  animation: wind-curve-1 20s ease-in-out infinite;
+}
+
+.animate-wind-curve-2 {
+  animation: wind-curve-2 25s ease-in-out infinite;
+  animation-delay: 5s;
+}
+
+.animate-wind-curve-3 {
+  animation: wind-curve-3 18s ease-in-out infinite;
+  animation-delay: 10s;
+}
