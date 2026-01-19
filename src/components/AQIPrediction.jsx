@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import PropTypes from 'prop-types';
+import { authService } from '../services/auth';
 
 /**
  * Komponen AQIPrediction
@@ -10,6 +11,8 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [pollutant, setPollutant] = useState('pm25');
+  const [currentData, setCurrentData] = useState(null);
 
   const mlApiUrl = useMemo(() => import.meta.env.VITE_ML_API_URL || 'http://localhost:8001', []);
   const backendUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000', []);
@@ -21,7 +24,8 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
       title: 'Prediksi AQI (ISPU) 48 Jam',
       empty: 'Data historis tidak mencukupi untuk prediksi',
       hour: 'Jam',
-      aqi: 'Indeks AQI'
+      aqi: 'Indeks AQI',
+      selectPollutant: 'Pilih Polutan'
     },
     en: {
       loading: 'Processing ML prediction...',
@@ -29,7 +33,8 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
       title: '48H AQI Prediction',
       empty: 'Insufficient history for prediction',
       hour: 'Hour',
-      aqi: 'AQI Index'
+      aqi: 'AQI Index',
+      selectPollutant: 'Select Pollutant'
     },
     su: {
       loading: 'Ngolah prediksi ML...',
@@ -37,11 +42,153 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
       title: 'Prediksi AQI 48 Jam',
       empty: 'Data historis teu cekap',
       hour: 'Jam',
-      aqi: 'Indéks AQI'
+      aqi: 'Indéks AQI',
+      selectPollutant: 'Pilih Polutan'
     }
   };
 
   const t = uiText[language] || uiText.id;
+
+  // Helper untuk hitung AQI (ISPU) secara manual untuk laporan WA
+  const calculateAQI = (density, type) => {
+    const points = {
+      pm25: { x: [0.0, 15.5, 55.4, 150.4, 250.4, 500.0], y: [0, 50, 100, 200, 300, 500] },
+      pm10: { x: [0.0, 50, 150, 350, 420, 10000], y: [0, 50, 100, 200, 300, 500] }
+    };
+    const { x, y } = points[type];
+    
+    for (let i = 0; i < x.length - 1; i++) {
+      if (density >= x[i] && density <= x[i+1]) {
+        return ((y[i+1] - y[i]) / (x[i+1] - x[i])) * (density - x[i]) + y[i];
+      }
+    }
+    return y[y.length - 1];
+  };
+
+  const shareToWhatsApp = (mode = 'full') => {
+    try {
+      if (!currentData) {
+        console.warn('⚠️ Tidak ada data saat ini untuk laporan WA');
+        return;
+      }
+      
+      if (!predictions || predictions.length === 0) {
+        console.warn('⚠️ Tidak ada data prediksi untuk laporan WA');
+        return;
+      }
+
+      // Ambil data profil user untuk personalisasi
+      let user = null;
+      try {
+        user = authService.getCurrentUser();
+      } catch (authErr) {
+        console.error('Error fetching user profile:', authErr);
+      }
+
+      const aqi25 = Math.round(calculateAQI(currentData.pm25_density || 0, 'pm25'));
+      const aqi10 = Math.round(calculateAQI(currentData.pm10_density || 0, 'pm10'));
+      
+      const avgAqi = Math.round(predictions.reduce((a, b) => a + (b.predicted_aqi || 0), 0) / predictions.length);
+      const peakAqi = Math.round(Math.max(...predictions.map(p => p.predicted_aqi || 0)));
+      
+      const status25 = getAqiStatus(aqi25);
+      const status10 = getAqiStatus(aqi10);
+
+      // Cari 3 waktu terbaik (AQI terendah) dari prediksi
+      const sortedPredictions = [...predictions].sort((a, b) => a.predicted_aqi - b.predicted_aqi);
+      const top3Times = sortedPredictions.slice(0, 3).map(p => ({
+        time: new Date(p.timestamp).toLocaleString('id-ID', { weekday: 'long', hour: '2-digit', minute: '2-digit' }),
+        aqi: Math.round(p.predicted_aqi)
+      }));
+
+      const bestTimeStr = top3Times[0]?.time || '-';
+
+      // Personalisasi Saran Kesehatan
+      let personalAdvice = '';
+      const isSensitive = user?.sensitivity_level === 'high' || (user?.age && (user.age < 12 || user.age > 60));
+      const activity = user?.activity_level || 'moderate';
+
+      if (aqi25 > 150 || aqi10 > 150) {
+        personalAdvice = isSensitive 
+          ? '🔴 *PERINGATAN:* Kualitas udara sangat buruk bagi kondisi Anda. Tetaplah di dalam ruangan dan gunakan air purifier jika memungkinkan.'
+          : '🔴 *PERINGATAN:* Gunakan masker N95 jika harus keluar rumah. Hindari aktivitas fisik berat.';
+      } else if (aqi25 > 100 || aqi10 > 100) {
+        personalAdvice = isSensitive
+          ? '🟠 *Saran:* Kelompok sensitif sebaiknya mengurangi aktivitas luar ruangan yang lama.'
+          : '🟠 *Saran:* Gunakan masker medis saat beraktivitas di luar.';
+      } else {
+        personalAdvice = activity === 'active'
+          ? '🟢 *Saran:* Kualitas udara mendukung untuk olahraga outdoor! Tetap jaga hidrasi.'
+          : '🟢 *Saran:* Udara bersih. Waktu yang baik untuk ventilasi rumah atau jalan santai.';
+      }
+
+      let message = '';
+
+      if (mode === 'status') {
+        // Format ringkas untuk Status WhatsApp (Lebih estetik)
+        message = `☁️ *Update Udara ${city}* ☁️\n` +
+          `━━━━━━━━━━━━━━━\n` +
+          `📍 PM2.5: *${aqi25}* (${status25})\n` +
+          `🏃 Best Time: *${bestTimeStr}*\n` +
+          `📢 _${personalAdvice.split(':')[1]?.trim() || personalAdvice}_\n` +
+          `━━━━━━━━━━━━━━━\n` +
+          `Cek selengkapnya di Hawa Air Quality! 🌍`;
+      } else {
+        // Format lengkap (Kaya Informasi)
+        const nameGreeting = user?.full_name ? `Halo, *${user.full_name}*! ` : '';
+        
+        message = `*🌿 Laporan Kualitas Udara ${city} 🌿*\n` +
+          `📅 _${new Date().toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })}_\n` +
+          `━━━━━━━━━━━━━━━━━━\n\n` +
+          `${nameGreeting}Berikut adalah analisis udara terbaru untuk Anda:\n\n` +
+          `📍 *KONDISI REAL-TIME:*\n` +
+          `• AQI PM2.5: *${aqi25}* (${status25})\n` +
+          `• AQI PM10: *${aqi10}* (${status10})\n\n` +
+          `🩺 *REKOMENDASI KESEHATAN:*\n` +
+          `${personalAdvice}\n\n` +
+          `📊 *OUTLOOK 48 JAM (${pollutant.toUpperCase()}):*\n` +
+          `• Rata-rata: *${avgAqi}*\n` +
+          `• Puncak: *${peakAqi}*\n\n` +
+          `🏃 *WAKTU TERBAIK BERAKTIVITAS:*\n` +
+          top3Times.map((t, i) => `${i+1}. *${t.time}* (AQI: ${t.aqi})`).join('\n') +
+          `\n\n` +
+          `💡 *TIPS:* Jendela waktu di atas adalah saat polusi diprediksi mencapai titik terendah. Gunakan waktu tersebut untuk olahraga atau menjemur pakaian.\n\n` +
+          `_Dikirim otomatis via Hawa Air Quality Monitor_`;
+      }
+
+      const encodedMessage = encodeURIComponent(message);
+      
+      // Ambil nomor WA dari profil user
+      const phoneNumber = user?.phone_e164 || '';
+      
+      // Bersihkan nomor telepon (hanya angka)
+      let cleanPhone = phoneNumber ? String(phoneNumber).replace(/[^0-9]/g, '') : '';
+      
+      // Auto-fix untuk nomor Indonesia yang dimulai dengan '0'
+      if (cleanPhone.startsWith('0')) {
+        cleanPhone = '62' + cleanPhone.substring(1);
+      }
+      
+      // Gunakan format api.whatsapp.com untuk kompatibilitas lebih baik
+      const waUrl = cleanPhone 
+        ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedMessage}`
+        : `https://api.whatsapp.com/send?text=${encodedMessage}`;
+        
+      console.log('🚀 Opening WhatsApp URL:', waUrl);
+      
+      // Gunakan link anchor sementara untuk memicu pembukaan aplikasi di mobile
+      const link = document.createElement('a');
+      link.href = waUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error('❌ Error sharing to WhatsApp:', err);
+      alert('Gagal mengirim laporan ke WhatsApp. Silakan coba lagi.');
+    }
+  };
 
   useEffect(() => {
     const fetchPrediction = async () => {
@@ -50,7 +197,6 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
 
       try {
         // 1. Ambil data historis dari backend utama (butuh minimal 49 jam terakhir)
-        // Kita asumsikan ada endpoint untuk mendapatkan history PM2.5
         const headers = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -62,16 +208,9 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
         const historyJson = await historyRes.json();
         const hourlyData = historyJson.data?.hourly || [];
 
-        console.log('📊 Data dari backend:', {
-          total: hourlyData.length,
-          first: hourlyData[0],
-          last: hourlyData[hourlyData.length - 1]
-        });
-
         // Data dari backend sekarang bisa berisi ribuan baris (data 30 detikan)
         // Kita butuh minimal data yang mencakup rentang 49 jam
         if (hourlyData.length < 49) {
-          console.warn('⚠️ Data tidak cukup:', hourlyData.length, 'butuh minimal 49');
           setError(t.empty);
           setLoading(false);
           return;
@@ -80,32 +219,32 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
         // 2. Format data untuk API ML - sesuaikan dengan skema HistoryItem di app_simple.py
         const mlPayload = hourlyData.map(h => ({
           timestamp: h.timestamp || h.datetime,
-          pm25_density: h.pm25_density || h.pm25 || 20.0
+          pm25_density: h.pm25_density || h.pm25 || 0,
+          pm10_density: h.pm10_density || h.pm10 || 0
         }));
 
-        console.log('📤 Sending to ML API:', {
-          url: `${mlApiUrl}/predict`,
-          dataPoints: mlPayload.length,
-          sample: mlPayload.slice(0, 3)
-        });
+        // Simpan data terakhir untuk laporan WhatsApp
+        if (mlPayload.length > 0) {
+          setCurrentData(mlPayload[mlPayload.length - 1]);
+        }
 
-        // 3. Panggil API Machine Learning
+        // 3. Panggil API Machine Learning dengan format PredictRequest
         const mlRes = await fetch(`${mlApiUrl}/predict`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(mlPayload)
+          body: JSON.stringify({
+            pollutant: pollutant,
+            history: mlPayload
+          })
         });
 
         const mlJson = await mlRes.json().catch(() => ({}));
-        
-        console.log('📥 ML API Response:', mlJson);
         
         if (!mlRes.ok) {
           throw new Error(mlJson.detail || 'API ML tidak merespon');
         }
 
         const predictions = mlJson.predictions || [];
-        console.log('✅ Predictions received:', predictions.length);
         setPredictions(predictions);
       } catch (err) {
         console.error('ML Prediction Error:', err);
@@ -116,7 +255,7 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
     };
 
     fetchPrediction();
-  }, [mlApiUrl, backendUrl, city, token]);
+  }, [mlApiUrl, backendUrl, city, token, pollutant, t.empty, t.error]);
 
   console.log('🎨 Rendering AQIPrediction:', { loading, error, predictionsCount: predictions.length });
 
@@ -185,16 +324,66 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
             </svg>
           </div>
           <div>
-            <h3 className="text-sm font-bold text-gray-900 leading-none">{t.title}</h3>
+            <h3 className="text-sm font-bold text-gray-900 leading-none">
+              {t.title} {pollutant === 'pm25' ? 'PM2.5' : 'PM10'}
+            </h3>
             <p className="text-[10px] text-gray-400 font-medium mt-1">Machine Learning Analysis</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="flex h-2 w-2 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-          </span>
-          <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Live Predict</span>
+        
+        <div className="flex items-center gap-4">
+          <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200">
+            <button
+              onClick={() => setPollutant('pm25')}
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                pollutant === 'pm25' 
+                  ? 'bg-white text-blue-600 shadow-sm' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              PM2.5
+            </button>
+            <button
+              onClick={() => setPollutant('pm10')}
+              className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                pollutant === 'pm10' 
+                  ? 'bg-white text-blue-600 shadow-sm' 
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              PM10
+            </button>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-2">
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+            </span>
+            <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Live</span>
+          </div>
+
+          <button
+            onClick={() => shareToWhatsApp('full')}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm group"
+            title="Kirim Laporan Lengkap"
+          >
+            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.72.937 3.672 1.433 5.66 1.433h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+            </svg>
+            <span className="text-[10px] font-bold uppercase tracking-tight">Lapor</span>
+          </button>
+
+          <button
+            onClick={() => shareToWhatsApp('status')}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors shadow-sm group"
+            title="Bagikan ke Status WA"
+          >
+            <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+            </svg>
+            <span className="text-[10px] font-bold uppercase tracking-tight">Status</span>
+          </button>
         </div>
       </div>
       
@@ -243,6 +432,12 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
                 >
                   <div className="text-[7px] font-bold text-gray-400 uppercase leading-none mb-1">
                     {new Date(hoveredPoint.data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                  <div className="text-[7px] font-bold text-gray-400 uppercase leading-none mb-1">
+                    PM2.5: {Math.round(hoveredPoint.data.pm25_density)} μg/m³
+                  </div>
+                  <div className="text-[7px] font-bold text-gray-400 uppercase leading-none mb-1">
+                    PM10: {Math.round(hoveredPoint.data.pm10_density)} μg/m³
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-black">
