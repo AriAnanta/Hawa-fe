@@ -9,12 +9,13 @@ import { authService } from '../services/auth';
 export default function AQIPrediction({ city = 'Bandung', language = 'id', token = null }) {
   const [predictions, setPredictions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [error, setError] = useState('');
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [pollutant, setPollutant] = useState('pm25');
   const [currentData, setCurrentData] = useState(null);
 
-  const mlApiUrl = useMemo(() => import.meta.env.VITE_ML_API_URL || 'http://localhost:8001', []);
+  const mlApiUrl = useMemo(() => import.meta.env.VITE_ML_API_URL || 'http://localhost:8000/weather', []);
   const backendUrl = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000', []);
 
   const uiText = {
@@ -65,7 +66,7 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
     return y[y.length - 1];
   };
 
-  const shareToWhatsApp = (mode = 'full') => {
+  const shareToWhatsApp = async (mode = 'full') => {
     try {
       if (!currentData) {
         console.warn('⚠️ Tidak ada data saat ini untuk laporan WA');
@@ -77,7 +78,9 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
         return;
       }
 
-      // Ambil data profil user untuk personalisasi
+      setSharing(true);
+      
+      // Ambil data profil user untuk context lokal (opsional, backend juga ambil)
       let user = null;
       try {
         user = authService.getCurrentUser();
@@ -92,7 +95,6 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
       const peakAqi = Math.round(Math.max(...predictions.map(p => p.predicted_aqi || 0)));
       
       const status25 = getAqiStatus(aqi25);
-      const status10 = getAqiStatus(aqi10);
 
       // Cari 3 waktu terbaik (AQI terendah) dari prediksi
       const sortedPredictions = [...predictions].sort((a, b) => a.predicted_aqi - b.predicted_aqi);
@@ -101,92 +103,74 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
         aqi: Math.round(p.predicted_aqi)
       }));
 
-      const bestTimeStr = top3Times[0]?.time || '-';
-
-      // Personalisasi Saran Kesehatan
-      let personalAdvice = '';
-      const isSensitive = user?.sensitivity_level === 'high' || (user?.age && (user.age < 12 || user.age > 60));
-      const activity = user?.activity_level || 'moderate';
-
-      if (aqi25 > 150 || aqi10 > 150) {
-        personalAdvice = isSensitive 
-          ? '🔴 *PERINGATAN:* Kualitas udara sangat buruk bagi kondisi Anda. Tetaplah di dalam ruangan dan gunakan air purifier jika memungkinkan.'
-          : '🔴 *PERINGATAN:* Gunakan masker N95 jika harus keluar rumah. Hindari aktivitas fisik berat.';
-      } else if (aqi25 > 100 || aqi10 > 100) {
-        personalAdvice = isSensitive
-          ? '🟠 *Saran:* Kelompok sensitif sebaiknya mengurangi aktivitas luar ruangan yang lama.'
-          : '🟠 *Saran:* Gunakan masker medis saat beraktivitas di luar.';
-      } else {
-        personalAdvice = activity === 'active'
-          ? '🟢 *Saran:* Kualitas udara mendukung untuk olahraga outdoor! Tetap jaga hidrasi.'
-          : '🟢 *Saran:* Udara bersih. Waktu yang baik untuk ventilasi rumah atau jalan santai.';
-      }
-
+      // Panggil API Backend untuk generate konten AI
       let message = '';
+      try {
+        const response = await fetch(`${backendUrl}/weather/whatsapp-content`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : ''
+          },
+          body: JSON.stringify({
+            mode: mode === 'status' ? 'share' : 'report',
+            city: city,
+            pm25: aqi25,
+            pm10: aqi10,
+            aqi: Math.max(aqi25, aqi10),
+            status: status25,
+            language: language,
+            additional_context: {
+              top_3_times: top3Times,
+              avg_aqi: avgAqi,
+              peak_aqi: peakAqi
+            }
+          })
+        });
 
-      if (mode === 'status') {
-        // Format ringkas untuk Status WhatsApp (Lebih estetik)
-        message = `☁️ *Update Udara ${city}* ☁️\n` +
-          `━━━━━━━━━━━━━━━\n` +
-          `📍 PM2.5: *${aqi25}* (${status25})\n` +
-          `🏃 Best Time: *${bestTimeStr}*\n` +
-          `📢 _${personalAdvice.split(':')[1]?.trim() || personalAdvice}_\n` +
-          `━━━━━━━━━━━━━━━\n` +
-          `Cek selengkapnya di Hawa Air Quality! 🌍`;
-      } else {
-        // Format lengkap (Kaya Informasi)
-        const nameGreeting = user?.full_name ? `Halo, *${user.full_name}*! ` : '';
+        if (response.ok) {
+          const data = await response.json();
+          message = data.content;
+        } else {
+          throw new Error('Gagal memanggil API AI');
+        }
+      } catch (aiErr) {
+        console.error('AI Content Generation Error, using fallback:', aiErr);
+        // Fallback ke template lokal yang lebih kaya jika API gagal
+        const personalAdvice = aqi25 > 100 ? 'Gunakan masker dan kurangi aktivitas luar ruangan.' : 'Kualitas udara baik, tetap jaga kesehatan.';
         
-        message = `*🌿 Laporan Kualitas Udara ${city} 🌿*\n` +
-          `📅 _${new Date().toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' })}_\n` +
-          `━━━━━━━━━━━━━━━━━━\n\n` +
-          `${nameGreeting}Berikut adalah analisis udara terbaru untuk Anda:\n\n` +
-          `📍 *KONDISI REAL-TIME:*\n` +
-          `• AQI PM2.5: *${aqi25}* (${status25})\n` +
-          `• AQI PM10: *${aqi10}* (${status10})\n\n` +
-          `🩺 *REKOMENDASI KESEHATAN:*\n` +
-          `${personalAdvice}\n\n` +
-          `📊 *OUTLOOK 48 JAM (${pollutant.toUpperCase()}):*\n` +
-          `• Rata-rata: *${avgAqi}*\n` +
-          `• Puncak: *${peakAqi}*\n\n` +
-          `🏃 *WAKTU TERBAIK BERAKTIVITAS:*\n` +
-          top3Times.map((t, i) => `${i+1}. *${t.time}* (AQI: ${t.aqi})`).join('\n') +
-          `\n\n` +
-          `💡 *TIPS:* Jendela waktu di atas adalah saat polusi diprediksi mencapai titik terendah. Gunakan waktu tersebut untuk olahraga atau menjemur pakaian.\n\n` +
-          `_Dikirim otomatis via Hawa Air Quality Monitor_`;
+        let bestTimesText = '';
+        if (top3Times && top3Times.length > 0) {
+          bestTimesText = '\n\n🕒 *Waktu Terbaik Beraktivitas:*';
+          top3Times.forEach(t => {
+            bestTimesText += `\n- ${t.time} (AQI ${t.aqi})`;
+          });
+        }
+
+        if (mode === 'status') {
+          message = `☁️ *Update Udara ${city}* ☁️\nAQI PM2.5: *${aqi25}* (${status25})\n\nCek selengkapnya di Hawa Air Quality! 🌍`;
+        } else {
+          message = `*🌿 Laporan Kualitas Udara ${city} 🌿*\nAQI PM2.5: *${aqi25}* (${status25})${bestTimesText}\n\n🩺 *SARAN:* ${personalAdvice}\n\n_Dikirim via Hawa Air Quality_`;
+        }
       }
 
       const encodedMessage = encodeURIComponent(message);
       
       // Ambil nomor WA dari profil user
       const phoneNumber = user?.phone_e164 || '';
-      
-      // Bersihkan nomor telepon (hanya angka)
       let cleanPhone = phoneNumber ? String(phoneNumber).replace(/[^0-9]/g, '') : '';
+      if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.substring(1);
       
-      // Auto-fix untuk nomor Indonesia yang dimulai dengan '0'
-      if (cleanPhone.startsWith('0')) {
-        cleanPhone = '62' + cleanPhone.substring(1);
-      }
-      
-      // Gunakan format api.whatsapp.com untuk kompatibilitas lebih baik
       const waUrl = cleanPhone 
         ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedMessage}`
         : `https://api.whatsapp.com/send?text=${encodedMessage}`;
         
-      console.log('🚀 Opening WhatsApp URL:', waUrl);
-      
-      // Gunakan link anchor sementara untuk memicu pembukaan aplikasi di mobile
-      const link = document.createElement('a');
-      link.href = waUrl;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      window.open(waUrl, '_blank');
     } catch (err) {
       console.error('❌ Error sharing to WhatsApp:', err);
       alert('Gagal mengirim laporan ke WhatsApp. Silakan coba lagi.');
+    } finally {
+      setSharing(false);
     }
   };
 
@@ -244,7 +228,7 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
           throw new Error(mlJson.detail || 'API ML tidak merespon');
         }
 
-        const predictions = mlJson.predictions || [];
+        const predictions = mlJson.forecast_48h || mlJson.predictions || [];
         setPredictions(predictions);
       } catch (err) {
         console.error('ML Prediction Error:', err);
@@ -365,24 +349,38 @@ export default function AQIPrediction({ city = 'Bandung', language = 'id', token
 
           <button
             onClick={() => shareToWhatsApp('full')}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm group"
+            disabled={sharing}
+            className={`flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors shadow-sm group ${sharing ? 'opacity-50 cursor-not-allowed' : ''}`}
             title="Kirim Laporan Lengkap"
           >
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.72.937 3.672 1.433 5.66 1.433h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
-            </svg>
-            <span className="text-[10px] font-bold uppercase tracking-tight">Lapor</span>
+            {sharing ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L0 24l6.335-1.662c1.72.937 3.672 1.433 5.66 1.433h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+              </svg>
+            )}
+            <span className="text-[10px] font-bold uppercase tracking-tight">
+              {sharing ? 'Generating...' : 'Lapor'}
+            </span>
           </button>
 
           <button
             onClick={() => shareToWhatsApp('status')}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors shadow-sm group"
+            disabled={sharing}
+            className={`flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors shadow-sm group ${sharing ? 'opacity-50 cursor-not-allowed' : ''}`}
             title="Bagikan ke Status WA"
           >
-            <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-            </svg>
-            <span className="text-[10px] font-bold uppercase tracking-tight">Status</span>
+            {sharing ? (
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            ) : (
+              <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+              </svg>
+            )}
+            <span className="text-[10px] font-bold uppercase tracking-tight">
+              {sharing ? 'Processing...' : 'Status'}
+            </span>
           </button>
         </div>
       </div>
